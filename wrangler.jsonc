@@ -1,0 +1,23 @@
+{
+  "name": "x402-url-shortener",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-03-12",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "URLS",
+      "id": "f56137f3a111462cb06b35d6a5368bbd"
+    }
+  ],
+  "vars": {
+    "SERVER_ADDRESS": "0x34D3eD2c5Fc6D6A0F25d1Aad77193a8AA88A52b5"
+  },
+  "routes": [
+    {
+      "pattern": "link.camelai.io",
+      "custom_domain": true
+    }
+  ]
+}

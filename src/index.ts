@@ -1,84 +1,67 @@
 import { Hono } from "hono";
 import { cdpPaymentMiddleware } from "x402-cdp";
-import { describeRoute, openAPIRouteHandler } from "hono-openapi";
+import { extractParams } from "x402-ai";
+import { openapiFromMiddleware } from "x402-openapi";
 import { nanoid } from "nanoid";
 
 const app = new Hono<{ Bindings: Env }>();
 
-// OpenAPI spec — must be before paymentMiddleware
-app.get("/.well-known/openapi.json", openAPIRouteHandler(app, {
-  documentation: {
-    info: {
-      title: "x402 URL Shortener",
-      description: "Shorten URLs and redirect via short IDs. Pay-per-use via x402 protocol on Base mainnet.",
-      version: "1.0.0",
-    },
-    servers: [{ url: "https://link.camelai.io" }],
-  },
-}));
+const SYSTEM_PROMPT = `You are a parameter extractor for a URL shortening service.
+Extract the following from the user's message and return JSON:
+- "url": the URL to shorten (required)
 
-// x402 payment gate on POST /shorten
-app.use(
-  cdpPaymentMiddleware(
-    (env) => ({
-      "POST /shorten": {
-        accepts: [
-          {
-            scheme: "exact",
-            price: "$0.001",
-            network: "eip155:8453",
-            payTo: env.SERVER_ADDRESS as `0x${string}`,
+Return ONLY valid JSON, no explanation.
+Examples:
+- {"url": "https://example.com/very/long/path/to/some/page"}
+- {"url": "https://github.com/user/repo"}`;
+
+const ROUTES = {
+  "POST /": {
+    accepts: [{ scheme: "exact", price: "$0.001", network: "eip155:8453", payTo: "0x0" as `0x${string}` }],
+    description: "Shorten a URL. Send {\"input\": \"your request\"}",
+    mimeType: "application/json",
+    extensions: {
+      bazaar: {
+        info: {
+          input: {
+            type: "http",
+            method: "POST",
+            bodyType: "json",
+            body: {
+              input: { type: "string", description: "Provide the URL you want to shorten", required: true },
+            },
           },
-        ],
-        description: "Shorten a URL",
-        mimeType: "application/json",
-        extensions: {
-          bazaar: {
-            discoverable: true,
-            inputSchema: {
-              bodyFields: {
-                url: {
-                  type: "string",
-                  description: "URL to shorten",
-                  required: true,
-                },
-              },
+          output: { type: "json" },
+        },
+        schema: {
+          properties: {
+            input: {
+              properties: { method: { type: "string", enum: ["POST"] } },
+              required: ["method"],
             },
           },
         },
       },
-    })
-  )
-);
-
-// Paid endpoint: shorten a URL
-app.post("/shorten", describeRoute({
-  description: "Shorten a URL. Requires x402 payment ($0.001).",
-  requestBody: {
-    required: true,
-    content: {
-      "application/json": {
-        schema: {
-          type: "object",
-          required: ["url"],
-          properties: {
-            url: { type: "string", description: "URL to shorten" },
-          },
-        },
-      },
     },
   },
-  responses: {
-    200: { description: "Shortened URL", content: { "application/json": { schema: { type: "object" } } } },
-    400: { description: "Missing or invalid URL" },
-    402: { description: "Payment required" },
-  },
-}), async (c) => {
-  const body = await c.req.json<{ url?: string }>();
-  const url = body?.url;
+};
 
+app.use(
+  cdpPaymentMiddleware((env) => ({
+    "POST /": { ...ROUTES["POST /"], accepts: [{ ...ROUTES["POST /"].accepts[0], payTo: env.SERVER_ADDRESS as `0x${string}` }] },
+  }))
+);
+
+app.post("/", async (c) => {
+  const body = await c.req.json<{ input?: string }>();
+  if (!body?.input) {
+    return c.json({ error: "Missing 'input' field" }, 400);
+  }
+
+  const params = await extractParams(c.env.CF_GATEWAY_TOKEN, SYSTEM_PROMPT, body.input);
+  const url = params.url as string;
   if (!url) {
-    return c.json({ error: "Missing 'url' in request body" }, 400);
+    return c.json({ error: "Could not determine URL to shorten" }, 400);
   }
 
   // Basic URL validation
@@ -96,13 +79,7 @@ app.post("/shorten", describeRoute({
 });
 
 // Free endpoint: redirect by short ID
-app.get("/:id", describeRoute({
-  description: "Redirect to the original URL by short ID.",
-  responses: {
-    302: { description: "Redirect to original URL" },
-    404: { description: "Short URL not found" },
-  },
-}), async (c) => {
+app.get("/:id", async (c) => {
   const id = c.req.param("id");
   const url = await c.env.URLS.get(id);
 
@@ -111,6 +88,16 @@ app.get("/:id", describeRoute({
   }
 
   return c.redirect(url, 302);
+});
+
+app.get("/.well-known/openapi.json", openapiFromMiddleware("x402 URL Shortener", "link.camelai.io", ROUTES));
+
+app.get("/", (c) => {
+  return c.json({
+    service: "x402-url-shortener",
+    description: "Shorten URLs and redirect via short IDs. Send POST / with {\"input\": \"shorten https://example.com/long/url\"}",
+    price: "$0.001 per request (Base mainnet)",
+  });
 });
 
 export default app;

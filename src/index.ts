@@ -1,25 +1,19 @@
 import { Hono } from "hono";
 import { cdpPaymentMiddleware } from "x402-cdp";
 import { stripeApiKeyMiddleware } from "x402-stripe";
-import { extractParams } from "x402-ai";
 import { openapiFromMiddleware } from "x402-openapi";
 import { nanoid } from "nanoid";
 
 const app = new Hono<{ Bindings: Env }>();
 
-const SYSTEM_PROMPT = `You are a parameter extractor for a URL shortening service.
-Extract the following from the user's message and return JSON:
-- "url": the URL to shorten (required)
-
-Return ONLY valid JSON, no explanation.
-Examples:
-- {"url": "https://example.com/very/long/path/to/some/page"}
-- {"url": "https://github.com/user/repo"}`;
-
 const ROUTES = {
   "POST /": {
-    accepts: [{ scheme: "exact", price: "$0.001", network: "eip155:8453", payTo: "0x0" as `0x${string}` }],
-    description: "Shorten a URL. Send {\"input\": \"your request\"}",
+    accepts: [
+      { scheme: "exact", price: "$0.001", network: "eip155:8453", payTo: "0x0" as `0x${string}` },
+      { scheme: "exact", price: "$0.001", network: "eip155:137", payTo: "0x0" as `0x${string}` },
+      { scheme: "exact", price: "$0.001", network: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp", payTo: "CvraJ4avKPpJNLvMhMH5ip2ihdt85PXvDwfzXdziUxRq" },
+    ],
+    description: "Shorten a URL. Send {\"url\": \"https://example.com/long/path\"}",
     mimeType: "application/json",
     extensions: {
       bazaar: {
@@ -29,7 +23,7 @@ const ROUTES = {
             method: "POST",
             bodyType: "json",
             body: {
-              input: { type: "string", description: "Provide the URL you want to shorten", required: true },
+              url: { type: "string", description: "The URL to shorten", required: true },
             },
           },
           output: { type: "json" },
@@ -52,23 +46,17 @@ app.use(stripeApiKeyMiddleware({ serviceName: "url-shortener" }));
 app.use(async (c, next) => {
   if (c.get("skipX402")) return next();
   return cdpPaymentMiddleware((env) => ({
-    "POST /": { ...ROUTES["POST /"], accepts: [{ ...ROUTES["POST /"].accepts[0], payTo: env.SERVER_ADDRESS as `0x${string}` }] },
+    "POST /": { ...ROUTES["POST /"], accepts: ROUTES["POST /"].accepts.map((a: any) => ({ ...a, payTo: a.network.startsWith("solana") ? a.payTo : env.SERVER_ADDRESS as `0x${string}` })) },
   }))(c, next);
 });
 
 app.post("/", async (c) => {
-  const body = await c.req.json<{ input?: string }>();
-  if (!body?.input) {
-    return c.json({ error: "Missing 'input' field" }, 400);
+  const body = await c.req.json<{ url?: string }>();
+  if (!body?.url) {
+    return c.json({ error: "Missing 'url' field" }, 400);
   }
+  const url = body.url.trim();
 
-  const params = await extractParams(c.env.CF_GATEWAY_TOKEN, SYSTEM_PROMPT, body.input);
-  const url = params.url as string;
-  if (!url) {
-    return c.json({ error: "Could not determine URL to shorten" }, 400);
-  }
-
-  // Basic URL validation
   try {
     new URL(url);
   } catch {
@@ -99,7 +87,7 @@ app.get("/.well-known/openapi.json", openapiFromMiddleware("x402 URL Shortener",
 app.get("/", (c) => {
   return c.json({
     service: "x402-url-shortener",
-    description: "Shorten URLs and redirect via short IDs. Send POST / with {\"input\": \"shorten https://example.com/long/url\"}",
+    description: "Shorten URLs and redirect via short IDs. Send POST / with {\"url\": \"https://example.com/long/url\"}",
     price: "$0.001 per request (Base mainnet)",
   });
 });

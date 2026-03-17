@@ -85,10 +85,8 @@ app.get("/:id", async (c) => {
 app.get("/.well-known/openapi.json", openapiFromMiddleware("x402 URL Shortener", "link.camelai.io", ROUTES));
 
 app.get("/", (c) => {
-  return c.json({
-    service: "x402-url-shortener",
-    description: "Shorten URLs and redirect via short IDs. Send POST / with {\"url\": \"https://example.com/long/url\"}",
-    price: "$0.001 per request (Base mainnet)",
+  return new Response('# link.camelai.io \\u2014 URL Shortener\n\nShorten URLs.\n\nPart of [camelai.io](https://camelai.io).\n\n## API\n\n\\`POST /\\` \\u2014 $0.001 per request\n\n**Body:** `{"url": "https://example.com/very/long/path"}`\n\n**Response:** JSON with short_url\n\n## Payment\n\nAccepts USDC on Base, Polygon, or Solana via x402. Or use a Stripe API key (\\`Authorization: Bearer sk_camel_...\\`).\n\nSee [camelai.io](https://camelai.io) for payment setup and full service list.', {
+    headers: { "Content-Type": "text/markdown; charset=utf-8" },
   });
 });
 
